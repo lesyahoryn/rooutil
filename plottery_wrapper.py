@@ -20,6 +20,7 @@ import tabletex
 from errors import E
 import errno    
 import pyrootutil as ru
+from array import array
 
 RooUtil_StatUtil_Loaded = False
 
@@ -186,6 +187,8 @@ def get_total_hist(hists):
         print "ERROR - the number of histograms are zero, while you asked me to sum them up."
     totalhist = cloneTH1(hists[0])
     totalhist.Reset()
+    totalhist.SetName("All")
+    totalhist.SetTitle("All")
     for hist in hists:
         totalhist.Add(hist)
     return totalhist
@@ -341,6 +344,15 @@ def rebin(hists, nbin):
         fac = currnbin / nbin
         if float(fac).is_integer() and fac > 0:
             hist.Rebin(fac)
+#______________________________________________________________________________________________________________________
+def variable_rebin(hists, bins):
+    new_hists = []
+    for hist in hists:
+        if not hist: continue
+        print "rebinning ", hist.GetName(), bins, len(bins), array('d', bins)
+        new = hist.Rebin(len(bins)-1, "new_"+hist.GetName(), array('d', bins))
+        new_hists.append(new)
+    return new_hists
 
 #______________________________________________________________________________________________________________________
 def single_divide_by_bin_width(hist):
@@ -699,12 +711,14 @@ def plot_sigscan(sig, bkg, fom=fom_SoverSqrtB):
         f, ferr = fom(sigint, sigerr, bkgint, bkgerr, totalsig, totalbkg)
         leftscan.SetBinContent(i, f)
         leftscan.SetBinError(i, ferr)
+        print "f is ", max_f, f
         if max_f < f:
             if fom == fom_acceptance:
                 if f <= 0.98:
                     max_f = f
                     max_f_cut = xmin + xwidth * (i - 1)
             else:
+                print "setting max f", max_f, f
                 max_f = f
                 max_f_cut = xmin + xwidth * (i - 1)
     # print max_f
@@ -880,7 +894,7 @@ def print_yield_table_from_list(hists, outputname, prec=2, binrange=[], noerror=
     else:
         x.add_column("Bin#", ["Bin{}".format(i) for i in bins])
     for hist in hists:
-        x.add_column(hist.GetName(), [ yield_str(hist, i, prec, noerror, options) for i in bins])
+        x.add_column(hist.GetName(), [ yield_str(hist, i,7, noerror, options) for i in bins])
     fname = outputname
     fname = os.path.splitext(fname)[0]+'.txt'
     x.print_table()
@@ -890,6 +904,23 @@ def print_yield_table_from_list(hists, outputname, prec=2, binrange=[], noerror=
     makedir(os.path.dirname(fname))
     f = open(fname, "w")
     f.write("".join(x.get_table_string()))
+
+#------------------------------------
+def print_yield_table_for_limits(hists, outputname, prec=2, binrange=[], noerror=False, options={}):
+    if len(hists) == 0:
+        return
+    bins =range(0, hists[0].GetNbinsX()+2)
+    
+    fname = outputname 
+    makedir(os.path.dirname(fname))
+    out_file = open(os.path.splitext(fname)[0]+'_limits.txt', "w")
+    out_file.write("bin   sample        events     uncertainity\n")
+
+    for b in bins:
+        for hist in hists:
+            out_file.write(str(b-1) + " " + hist.GetName() + " %.3f  %.3f \n"%(hist.GetBinContent(b), hist.GetBinError(b))) 
+
+    
 
 #______________________________________________________________________________________________________________________
 def print_bin_label_tex_style(rstr):
@@ -1088,6 +1119,7 @@ def print_yield_table(hdata, hbkgs, hsigs, hsyst, options):
         prec = options["yield_prec"]
         del options["yield_prec"]
     print_yield_table_from_list(hists, options["output_name"], prec, options=options)
+    print_yield_table_for_limits(hists, options["output_name"], prec, options=options)
 
     # Re arranging for tex
     histstex = []
@@ -1237,6 +1269,16 @@ def plot_hist(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], sig_
         rebin(bgs, nbins)
         rebin([data], nbins)
         del options["nbins"]
+    
+    if "variable_rebin" in options:
+        bins = options["variable_rebin"]
+        sigs = variable_rebin(sigs, bins)
+        bgs = variable_rebin(bgs, bins)
+        if data is not None:
+            data_tmp = variable_rebin([data], bins)
+            data = data_tmp[0]
+        del options["variable_rebin"]
+
 
     if "divide_by_bin_width" in options:
         if options["divide_by_bin_width"]:
@@ -1300,13 +1342,13 @@ def plot_hist(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], sig_
     totalbkg = None
     if len(bgs) != 0:
         totalbkg = get_total_hist(bgs)
-    maxmult = 1.8
+    maxmult = 1.1
     if "ymax_scale" in options:
         maxmult = options["ymax_scale"]
         del options["ymax_scale"]
     yaxismax = get_max_yaxis_range_order_half_modded(get_max_yaxis_range([data, totalbkg] + sigs) * maxmult)
     yaxismin = get_nonzeromin_yaxis_range(bgs)
-    #yaxismin = 1000
+    #yaxismin = 10**-2
 
     if "yaxis_log" in options:
         if options["yaxis_log"] and ("yaxis_range" not in options or options["yaxis_range"] == []):
@@ -1464,14 +1506,14 @@ def plot_hist(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], sig_
     if not "hist_line_none"                 in options: options["hist_line_none"]                 = False
     if not "hist_line_black"                in options: options["hist_line_black"]                = True
     if not "show_bkg_errors"                in options: options["show_bkg_errors"]                = False
-    if not "ratio_range"                    in options: options["ratio_range"]                    = [0.7, 1.3]
+    if not "ratio_range"                    in options: options["ratio_range"]                    = [0, 2]
     if not "ratio_name_size"                in options: options["ratio_name_size"]                = 0.13
     if not "ratio_name_offset"              in options: options["ratio_name_offset"]              = 0.6
     if not "ratio_xaxis_label_offset"       in options: options["ratio_xaxis_label_offset"]       = 0.06
     if not "ratio_yaxis_label_offset"       in options: options["ratio_yaxis_label_offset"]       = 0.03
     if not "ratio_xaxis_title_offset"       in options: options["ratio_xaxis_title_offset"]       = 1.60 if "xaxis_log" in options and options["xaxis_log"] else 1.40
     if not "ratio_xaxis_title_size"         in options: options["ratio_xaxis_title_size"]         = 0.13
-    if not "ratio_label_size"               in options: options["ratio_label_size"]               = 0.13
+    if not "ratio_label_size"               in options: options["ratio_label_size"]               = 0.10
     if not "canvas_tick_one_side"           in options: options["canvas_tick_one_side"]           = True
     if not "canvas_main_y1"                 in options: options["canvas_main_y1"]                 = 0.2
     if not "canvas_main_topmargin"          in options: options["canvas_main_topmargin"]          = 0.2 / 0.7 - 0.2
@@ -1545,7 +1587,7 @@ def plot_hist(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], sig_
     # Set permission
     os.system("chmod 644 {}".format(options["output_name"]))
 
-    options["output_name"] = options["output_name"].replace("pdf","png")
+    #options["output_name"] = options["output_name"].replace("pdf","png")
     # Call Plottery! I hope you win the Lottery!
     c1 = p.plot_hist(
             data          = data,
@@ -1595,6 +1637,7 @@ def plot_cut_scan(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], 
         del options["nbins"]
     plot_hist(data=None, sigs=hsigs, bgs=hbgs, syst=None, options=options, colors=colors, sig_labels=sig_labels, legend_labels=legend_labels)
 
+    
 #______________________________________________________________________________________________________________________
 def plot_soverb_scan(data=None, bgs=[], sigs=[], syst=None, options={}, colors=[], sig_labels=[], legend_labels=[]):
     hsigs = []
